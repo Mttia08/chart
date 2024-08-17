@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Temperaturvorhersage Thun</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        #chartContainer {
+            width: 80%;
+            margin: auto;
+        }
+        canvas {
+            width: 100%;
+            height: 400px;
+        }
+    </style>
+</head>
+<body>
+    <h2>Temperaturvorhersage Thun</h2>
+    <div id="chartContainer">
+        <canvas id="forecastChart"></canvas>
+    </div>
+
+    <!-- Include Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Include the date adapter for Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const apiUrl = "https://api.open-meteo.com/v1/forecast?latitude=46.7512&longitude=7.6217&hourly=temperature_2m&forecast_days=16&models=ecmwf_ifs025,gfs_seamless,icon_global,icon_eu,icon_d2";
+
+            fetch(apiUrl)
+                .then(response => response.json())
+                .then(data => {
+                    let forecastData = processForecastData(data.hourly);
+                    drawChart(forecastData);
+                })
+                .catch(error => console.error('Error fetching data:', error));
+        });
+
+        function processForecastData(data) {
+            let time = data.time.map(t => new Date(t));
+            let forecast = [];
+
+            for (let i = 0; i < time.length; i++) {
+                if (data.temperature_2m_icon_d2[i]) {
+                    forecast.push({ time: time[i], value: data.temperature_2m_icon_d2[i], model: 'ICON-D2' });
+                } else if (data.temperature_2m_icon_eu[i]) {
+                    if (data.temperature_2m_icon_d2[i - 6]) {
+                        forecast.push({ time: time[i], value: null, model: 'ICON-EU' });
+                    } else {
+                        forecast.push({ time: time[i], value: data.temperature_2m_icon_eu[i], model: 'ICON-EU' });
+                    }
+                } else if (data.temperature_2m_icon_global[i]) {
+                    if (data.temperature_2m_icon_eu[i - 6]) {
+                        forecast.push({ time: time[i], value: null, model: 'ICON-Global' });
+                    } else {
+                        forecast.push({ time: time[i], value: data.temperature_2m_icon_global[i], model: 'ICON-Global' });
+                    }
+                } else if (data.temperature_2m_ecmwf_ifs025[i]) {
+                    if (data.temperature_2m_icon_global[i - 6]) {
+                        forecast.push({ time: time[i], value: null, model: 'ECMWF-IFS' });
+                    } else {
+                        forecast.push({ time: time[i], value: data.temperature_2m_ecmwf_ifs025[i], model: 'ECMWF-IFS' });
+                    }
+                } else if (data.temperature_2m_gfs_seamless[i]) {
+                    if (data.temperature_2m_ecmwf_ifs025[i - 6]) {
+                        forecast.push({ time: time[i], value: null, model: 'GFS-Global' });
+                    } else {
+                        forecast.push({ time: time[i], value: data.temperature_2m_gfs_seamless[i], model: 'GFS-Global' });
+                    }
+                } else {
+                    forecast.push({ time: time[i], value: null, model: 'Unknown' });
+                }
+            }
+
+            forecast = interpolateNoneValuesCubic(forecast);
+
+            let groupedData = {};
+            let modelKeys = Array.from(new Set(forecast.map(point => point.model)));
+
+            for (let i = 0; i < modelKeys.length; i++) {
+                let model = modelKeys[i];
+                let startIndex = forecast.findIndex(point => point.model === model);
+                let endIndex = (i + 1 < modelKeys.length) 
+                    ? forecast.findIndex(point => point.model === modelKeys[i + 1])
+                    : forecast.length;
+
+                let modelData = forecast.slice(startIndex, endIndex + 1);
+
+                if (i > 0) {
+                    let previousModel = modelKeys[i - 1];
+                    let previousEndIndex = forecast.findIndex(point => point.model === previousModel) + forecast.slice(startIndex, endIndex + 1).findIndex(point => point.model === model);
+
+                    groupedData[previousModel].time.push(modelData[0].time);
+                    groupedData[previousModel].data.push(modelData[0].value);
+                }
+
+                groupedData[model] = { 
+                    time: modelData.map(point => point.time), 
+                    data: modelData.map(point => point.value) 
+                };
+            }
+
+            return groupedData;
+        }
+
+        function interpolateNoneValuesCubic(data) {
+            let indices = [];
+            let values = [];
+
+            data.forEach((point, index) => {
+                if (point.value !== null) {
+                    indices.push(index);
+                    values.push(point.value);
+                }
+            });
+
+            if (indices.length < 2) return data; // Not enough data to interpolate
+
+            let cs = new CubicSpline(indices, values);
+
+            return data.map((point, index) => {
+                if (point.value === null) {
+                    return { ...point, value: cs.at(index) };
+                } else {
+                    return point;
+                }
+            });
+        }
+
+        class CubicSpline {
+            constructor(xs, ys) {
+                const n = xs.length;
+                const a = ys.slice(0, n);
+                const b = Array(n - 1);
+                const d = Array(n - 1);
+                const h = Array(n - 1);
+
+                for (let i = 0; i < n - 1; i++) {
+                    h[i] = xs[i + 1] - xs[i];
+                }
+
+                const alpha = Array(n - 1);
+                for (let i = 1; i < n - 1; i++) {
+                    alpha[i] = (3 / h[i]) * (a[i + 1] - a[i]) - (3 / h[i - 1]) * (a[i] - a[i - 1]);
+                }
+
+                const c = Array(n);
+                const l = Array(n);
+                const mu = Array(n);
+                const z = Array(n);
+
+                l[0] = 1;
+                mu[0] = 0;
+                z[0] = 0;
+
+                for (let i = 1; i < n - 1; i++) {
+                    l[i] = 2 * (xs[i + 1] - xs[i - 1]) - h[i - 1] * mu[i - 1];
+                    mu[i] = h[i] / l[i];
+                    z[i] = (alpha[i] - h[i - 1] * z[i - 1]) / l[i];
+                }
+
+                l[n - 1] = 1;
+                z[n - 1] = 0;
+                c[n - 1] = 0;
+
+                for (let j = n - 2; j >= 0; j--) {
+                    c[j] = z[j] - mu[j] * c[j + 1];
+                    b[j] = (a[j + 1] - a[j]) / h[j] - h[j] * (c[j + 1] + 2 * c[j]) / 3;
+                    d[j] = (c[j + 1] - c[j]) / (3 * h[j]);
+                }
+
+                this.a = a;
+                this.b = b;
+                this.c = c.slice(0, n - 1);
+                this.d = d;
+                this.xs = xs.slice(0, n - 1);
+            }
+
+            at(x) {
+                let i = this.xs.length - 1;
+                for (let j = 0; j < this.xs.length; j++) {
+                    if (x < this.xs[j]) {
+                        i = j - 1;
+                        break;
+                    }
+                }
+                const dx = x - this.xs[i];
+                return this.a[i] + this.b[i] * dx + this.c[i] * dx ** 2 + this.d[i] * dx ** 3;
+            }
+        }
+
+        function drawChart(data) {
+            const ctx = document.getElementById('forecastChart').getContext('2d');
+            const chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: Object.keys(data).map(model => ({
+                        label: model,
+                        data: data[model].time.map((time, i) => ({ x: time, y: data[model].data[i] })),
+                        borderColor: getColorForModel(model),
+                        fill: false
+                    }))
+                },
+                options: {
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'day',
+                                tooltipFormat: 'dd.MM.yyyy'
+                            }
+                        },
+                        y: {
+                            beginAtZero: false,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        }
+                    }
+                }
+            });
+        }
+
+        function getColorForModel(model) {
+            const colors = {
+                'ICON-D2': 'rgba(75, 192, 192, 1)',
+                'ICON-EU': 'rgba(153, 102, 255, 1)',
+                'ICON-Global': 'rgba(255, 159, 64, 1)',
+                'ECMWF-IFS': 'rgba(255, 99, 132, 1)',
+                'GFS-Global': 'rgba(54, 162, 235, 1)'
+            };
+            return colors[model] || 'rgba(0, 0, 0, 1)';
+        }
+    </script>
+</body>
+</html>
