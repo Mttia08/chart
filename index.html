@@ -32,7 +32,7 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', function () {
-            const apiUrl = "https://api.open-meteo.com/v1/forecast?latitude=46.7512&longitude=7.6217&hourly=temperature_2m&forecast_days=16&models=ecmwf_ifs025,gfs_seamless,icon_global,icon_eu,icon_d2";
+            const apiUrl = "https://api.open-meteo.com/v1/forecast?latitude=46.7512&longitude=7.6217&hourly=temperature_2m&forecast_days=14&models=ecmwf_ifs025,gfs_seamless,icon_global,icon_eu,icon_d2";
 
             fetch(apiUrl)
                 .then(response => response.json())
