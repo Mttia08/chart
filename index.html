@@ -1,9 +1,10 @@
+
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
     <meta charset="UTF-8">
     <link rel="icon" type="image/x-icon" href="https://icons.iconarchive.com/icons/google/noto-emoji-travel-places/256/42650-thermometer-icon.png">
-    <title>Temperaturvorhersage Thun</title>
+    <title>Temperaturvorhersage</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -20,7 +21,11 @@
     </style>
 </head>
 <body>
-    <h2>Temperaturvorhersage Thun</h2>
+    <h1>Temperaturvorhersage</h1>
+    <label for="city">Stadt eingeben: </label>
+    <input type="text" id="city" name="city">
+    <button onclick="getForecast()">Suchen</button>
+    <h2 id="description"></h2>
     <div id="chartContainer">
         <canvas id="forecastChart"></canvas>
     </div>
@@ -31,33 +36,50 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            const apiUrl = "https://api.open-meteo.com/v1/forecast?latitude=46.7512&longitude=7.6217&hourly=temperature_2m&forecast_days=14&models=ecmwf_ifs025,gfs_seamless,icon_global,icon_eu,icon_d2";
+        function getForecast() {
+            const cityInput = document.getElementById('city');
+            const city = cityInput.value.trim();
+            const cityUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${city}&count=1&language=de&format=json`;
 
-            fetch(apiUrl)
+            fetch(cityUrl)
+                .then(response => response.json())
+                .then(data => {
+                    try {
+                        const coords = [data["results"][0]["latitude"], data["results"][0]["longitude"]];
+                        const description = `${data["results"][0]["name"]}, ${data["results"][0]["admin1"]}, ${data["results"][0]["country"]} (${coords[0]}, ${coords[1]})`;
+                        document.getElementById('description').innerText = description;
+                        const apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${coords[0]}&longitude=${coords[1]}&hourly=temperature_2m&forecast_days=14&models=ecmwf_ifs025,gfs_seamless,icon_global,icon_eu,icon_d2`;
+
+                        return fetch(apiUrl);
+
+                    } catch (error) {
+                        alert("Stadt nicht gefunden")
+                        return;
+                    }
+                })
                 .then(response => response.json())
                 .then(data => {
                     let forecastData = processForecastData(data.hourly);
                     drawChart(forecastData);
                 })
                 .catch(error => console.error('Error fetching data:', error));
-        });
+        }
 
         function processForecastData(data) {
             let time = data.time.map(t => new Date(t));
             let forecast = [];
 
             for (let i = 0; i < time.length; i++) {
-                if (data.temperature_2m_icon_d2[i]) {
+                if (data.temperature_2m_icon_d2 && data.temperature_2m_icon_d2[i]) {
                     forecast.push({ time: time[i], value: data.temperature_2m_icon_d2[i], model: 'ICON-D2' });
-                } else if (data.temperature_2m_icon_eu[i]) {
-                    if (data.temperature_2m_icon_d2[i - 6]) {
+                } else if (data.temperature_2m_icon_eu && data.temperature_2m_icon_eu[i]) {
+                    if (data.temperature_2m_icon_d2 && data.temperature_2m_icon_d2[i - 6]) {
                         forecast.push({ time: time[i], value: null, model: 'ICON-EU' });
                     } else {
                         forecast.push({ time: time[i], value: data.temperature_2m_icon_eu[i], model: 'ICON-EU' });
                     }
                 } else if (data.temperature_2m_icon_global[i]) {
-                    if (data.temperature_2m_icon_eu[i - 6]) {
+                    if (data.temperature_2m_icon_eu && data.temperature_2m_icon_eu[i - 6]) {
                         forecast.push({ time: time[i], value: null, model: 'ICON-Global' });
                     } else {
                         forecast.push({ time: time[i], value: data.temperature_2m_icon_global[i], model: 'ICON-Global' });
@@ -196,9 +218,16 @@
             }
         }
 
+        let chart;
+
         function drawChart(data) {
             const ctx = document.getElementById('forecastChart').getContext('2d');
-            const chart = new Chart(ctx, {
+
+            if (chart) {
+                chart.destroy();
+            }
+
+            chart = new Chart(ctx, {
                 type: 'line',
                 data: {
                     datasets: Object.keys(data).map(model => ({
